@@ -7,6 +7,8 @@ const path = require("path");
 const morgan = require("morgan");
 const requestIp = require("request-ip");
 const moment = require("moment-timezone");
+const { apiReference } = require("@scalar/express-api-reference");
+const swaggerSpec = require("./config/swagger");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,7 +21,7 @@ connectDB();
 // Middleware untuk menyimpan log ke file
 const accessLogStream = fs.createWriteStream(
   path.join(__dirname, "./access.log"),
-  { flags: "a" }
+  { flags: "a" },
 );
 
 // Middleware untuk mendapatkan alamat IP pengguna
@@ -43,8 +45,8 @@ app.use(
         tokens.url(req, res),
       ].join(" ");
     },
-    { stream: accessLogStream }
-  )
+    { stream: accessLogStream },
+  ),
 );
 
 // Middleware untuk memeriksa keberadaan ID dalam URL
@@ -64,28 +66,53 @@ const checkAccessLogId = (req, res, next) => {
   next();
 };
 
+const basicAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    res.set("WWW-Authenticate", 'Basic realm="Access Log"');
+    return res.status(401).send("Authentication required");
+  }
+
+  const base64Credentials = authHeader.split(" ")[1];
+  const credentials = Buffer.from(base64Credentials, "base64").toString("utf8");
+  const [username, password] = credentials.split(":");
+
+  if (
+    username === process.env.ACCESS_LOG_USER &&
+    password === process.env.ACCESS_LOG_KEY
+  ) {
+    return next();
+  }
+
+  res.set("WWW-Authenticate", 'Basic realm="Access Log"');
+  return res.status(401).send("Invalid credentials");
+};
+
 // Endpoint untuk menampilkan file access.log
-app.get("/access-log/:id", checkAccessLogId, (req, res) => {
+app.get("/access-log", basicAuth, (req, res) => {
   const accessLogPath = path.join(__dirname, "./access.log");
 
-  // Baca isi file access.log
   fs.readFile(accessLogPath, "utf8", (err, data) => {
     if (err) {
       return res.status(500).json({ message: "Internal Server Error" });
     }
 
-    // Kirim isi file access.log sebagai respon
     res.set("Content-Type", "text/plain");
     res.send(data);
   });
 });
-// Route untuk pengujian, boleh dihapus
-app.get("/", (req, res) => {
-  res.send("Hello World!");
-});
 
 // Use the blog routes
 app.use("/api/blogs", blogRoutes());
+
+// Swagger setup
+app.use(
+  "/docs",
+  apiReference({
+    spec: { content: swaggerSpec },
+  }),
+);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
